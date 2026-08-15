@@ -10,46 +10,31 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header class="topbar">
-    <div><div class="brand">BLACK TECH</div><div class="subtitle">Base inteligente de precios</div></div>
-    <button id="menuBtn" class="icon-btn" aria-label="Menú">☰</button>
-  </header>
-  <main class="app-shell">
-    <section id="view-cotizador" class="view active">
-      <div class="page-head"><div><h1>¿Cuánto cobrar?</h1><p>Busca una referencia y calcula un precio de venta.</p></div></div>
-      <div class="card">
-        <div class="grid two">
-          <label>Marca<input id="quoteBrand" list="brandsList" placeholder="Ej. Xiaomi"></label>
-          <label>Modelo / referencia<input id="quoteModel" list="modelsList" placeholder="Ej. Redmi 10 2022"></label>
-        </div>
-        <div class="grid two">
-          <label>Tipo de reparación<select id="quoteRepair"></select></label>
-          <label>Proveedor / costo<select id="quoteReference"></select></label>
-        </div>
-        <div id="referenceInfo" class="hint">Selecciona una referencia para ver los costos disponibles.</div>
-        <div class="section-title">Configuración</div>
-        <div class="segmented three" data-group="gama"><button data-value="Baja">Baja</button><button data-value="Media" class="selected">Media</button><button data-value="Alta">Alta</button></div>
-        <div class="field-label">Tipo de cliente</div>
-        <div class="segmented three" data-group="cliente"><button data-value="Normal" class="selected">Normal</button><button data-value="Regatea">Regatea</button><button data-value="Premium">Premium</button></div>
-        <div class="field-label">Modo de precio</div>
-        <div class="segmented three" data-group="modo"><button data-value="Rapido">Rápido</button><button data-value="Recomendado" class="selected">Recomendado</button><button data-value="Premium">Premium</button></div>
-      </div>
-      <div class="card results-card">
-        <div class="section-title">Resultado</div>
-        <div class="result-grid"><div class="result min"><span>Precio mínimo</span><strong id="priceMin">$ 0</strong></div><div class="result recommended"><span>Precio recomendado</span><strong id="priceRecommended">$ 0</strong></div><div class="result premium"><span>Precio premium</span><strong id="pricePremium">$ 0</strong></div></div>
-        <div class="cost-line"><span>Costo seleccionado</span><strong id="selectedCost">$ 0</strong></div>
-        <button id="saveQuoteBtn" class="primary full">Guardar cálculo</button>
-      </div>
-    </section>
-    <section id="view-catalogo" class="view"><div class="page-head"><div><h1>Referencias</h1><p>Guarda cada repuesto una sola vez.</p></div><button id="newRefBtn" class="primary">+ Nueva</button></div><div class="card"><input id="searchRef" class="search" placeholder="🔎 Buscar modelo, repuesto o proveedor..."></div><div id="referencesList" class="list"></div></section>
-    <section id="view-proveedores" class="view"><div class="page-head"><div><h1>Proveedores</h1><p>Compara costo y logística.</p></div></div><div id="providersList" class="list"></div><div class="card compact"><p class="muted">En V1 puedes registrar costo de envío y tipo de entrega. La comparación logística automática quedará preparada para una mejora posterior.</p><button id="newProviderBtn" class="secondary full">+ Agregar proveedor</button></div></section>
-    <section id="view-config" class="view"><div class="page-head"><div><h1>Configuración</h1><p>Cambia los valores sin tocar el código.</p></div></div><div class="card"><div class="section-title">Multiplicadores de precio</div><p class="muted">Valores provisionales inspirados en la lógica de tu aplicación anterior. Ajusta estos números a tu forma real de cobrar.</p><div class="grid three"><label>Mínimo<input id="multMin" type="number" min="0.1" step="0.01"></label><label>Recomendado<input id="multRec" type="number" min="0.1" step="0.01"></label><label>Premium<input id="multPrem" type="number" min="0.1" step="0.01"></label></div><label>Redondear a<input id="rounding" type="number" min="1" step="100" placeholder="1000"></label><button id="saveConfigBtn" class="primary full">Guardar configuración</button></div><div class="card"><div class="section-title">Datos</div><div class="grid two"><button id="exportBtn" class="secondary">Exportar respaldo</button><label class="file-btn secondary">Importar respaldo<input id="importInput" type="file" accept="application/json"></label></div><button id="clearBtn" class="danger full">Borrar todos los datos locales</button></div></section>
-    <section id="view-historial" class="view"><div class="page-head"><div><h1>Historial</h1><p>Cálculos guardados recientemente.</p></div></div><div id="historyList" class="list"></div></section>
-  </main>
-  <nav class="bottom-nav" id="bottomNav"><button data-view="cotizador" class="active"><span>💰</span>Cotizar</button><button data-view="catalogo"><span>📦</span>Referencias</button><button data-view="proveedores"><span>🚚</span>Proveedores</button><button data-view="historial"><span>🧾</span>Historial</button><button data-view="config"><span>⚙️</span>Config.</button></nav>
-  <dialog id="referenceDialog"><form method="dialog" id="referenceForm" class="modal"><div class="modal-head"><h2>Nueva referencia</h2><button value="cancel" class="icon-btn">✕</button></div><div class="grid two"><label>Marca<input name="brand" required placeholder="Xiaomi"></label><label>Modelo<input name="model" required placeholder="Redmi 10 2022"></label></div><div class="grid two"><label>Tipo de reparación<input name="repair" required placeholder="Pantalla LCD"></label><label>Calidad<input name="quality" placeholder="Original / OLED / Incell"></label></div><label>Proveedor<select name="provider" id="dialogProvider"></select></label><label>Costo del repuesto<input name="cost" type="number" min="0" step="100" required placeholder="45000"></label><label>Nota<textarea name="note" rows="2"></textarea></label><button class="primary full" value="default">Guardar referencia</button></form></dialog>
-  <dialog id="providerDialog"><form method="dialog" id="providerForm" class="modal"><div class="modal-head"><h2>Nuevo proveedor</h2><button value="cancel" class="icon-btn">✕</button></div><label>Nombre<input name="name" required placeholder="Proveedor 1"></label><label>Entrega<select name="delivery"><option>Recogida presencial</option><option>Envío</option><option>Ambos</option></select></label><label>Costo de envío<input name="shipping" type="number" min="0" step="100" value="0"></label><label>Nota<textarea name="note" rows="2"></textarea></label><button class="primary full" value="default">Guardar proveedor</button></form></dialog>
-  <datalist id="brandsList"></datalist><datalist id="modelsList"></datalist>
-  <script src="app.js"></script>
-</body>
-</html>
+<header class="topbar"><div><div class="brand">BLACK TECH</div><div class="subtitle">Base inteligente de precios</div></div></header>
+<main class="app-shell">
+<section id="view-cotizador" class="view active">
+  <div class="page-head"><div><h1>¿Cuánto cobrar?</h1><p>Encuentra el repuesto y calcula el precio de la reparación.</p></div></div>
+  <div class="card">
+    <div class="grid two"><label>Marca<input id="quoteBrand" list="brandsList" placeholder="Ej. Xiaomi"></label><label>Modelo / referencia<input id="quoteModel" list="modelsList" placeholder="Ej. Redmi 10 2022"></label></div>
+    <label>Tipo de reparación<select id="quoteRepair"></select></label>
+    <div id="providerComparison" class="provider-comparison"></div>
+    <div id="referenceInfo" class="hint">Escribe marca y modelo para buscar referencias guardadas.</div>
+    <div class="grid two"><label>Mano de obra<input id="laborCost" type="number" min="0" step="1000" placeholder="40000"></label><label>Costo total base<input id="baseCost" type="text" readonly value="$ 0"></label></div>
+  </div>
+  <div class="card results-card">
+    <div class="section-title">Precio sugerido</div>
+    <div class="result-grid"><div class="result min"><span>Mínimo</span><strong id="priceMin">$ 0</strong></div><div class="result recommended"><span>Recomendado</span><strong id="priceRecommended">$ 0</strong></div><div class="result premium"><span>Premium</span><strong id="pricePremium">$ 0</strong></div></div>
+    <div class="cost-line"><span>Repuesto + mano de obra</span><strong id="selectedCost">$ 0</strong></div>
+    <button id="saveQuoteBtn" class="primary full">Guardar cálculo</button>
+  </div>
+</section>
+<section id="view-catalogo" class="view"><div class="page-head"><div><h1>Referencias</h1><p>Registra un repuesto una vez y reutilízalo.</p></div><button id="newRefBtn" class="primary">+ Nueva</button></div><div class="card"><input id="searchRef" class="search" placeholder="🔎 Buscar modelo, reparación o proveedor..."></div><div id="referencesList" class="list"></div></section>
+<section id="view-proveedores" class="view"><div class="page-head"><div><h1>Proveedores</h1><p>Costos y logística de tus proveedores.</p></div></div><div id="providersList" class="list"></div><div class="card compact"><button id="newProviderBtn" class="secondary full">+ Agregar proveedor</button></div></section>
+<section id="view-config" class="view"><div class="page-head"><div><h1>Configuración</h1><p>Ajusta la forma en que calculamos el precio.</p></div></div><div class="card"><div class="section-title">Mano de obra</div><div class="grid three"><label>Baja<input id="laborLow" type="number" min="0" step="1000"></label><label>Media<input id="laborMedium" type="number" min="0" step="1000"></label><label>Alta<input id="laborHigh" type="number" min="0" step="1000"></label></div><div class="section-title">Margen sobre costo base</div><div class="grid three"><label>Mínimo %<input id="marginMin" type="number" min="0" step="1"></label><label>Recomendado %<input id="marginRec" type="number" min="0" step="1"></label><label>Premium %<input id="marginPrem" type="number" min="0" step="1"></label></div><label>Redondear a<input id="rounding" type="number" min="1" step="100" placeholder="1000"></label><button id="saveConfigBtn" class="primary full">Guardar configuración</button><p class="muted">Los valores actuales son provisionales para probar la aplicación. Luego los ajustamos a tus reglas reales.</p></div><div class="card"><div class="section-title">Datos</div><div class="grid two"><button id="exportBtn" class="secondary">Exportar respaldo</button><label class="file-btn secondary">Importar respaldo<input id="importInput" type="file" accept="application/json"></label></div><button id="clearBtn" class="danger full">Borrar datos locales</button></div></section>
+<section id="view-historial" class="view"><div class="page-head"><div><h1>Historial</h1><p>Cálculos guardados recientemente.</p></div></div><div id="historyList" class="list"></div></section>
+</main>
+<nav class="bottom-nav"><button data-view="cotizador" class="active"><span>💰</span>Cotizar</button><button data-view="catalogo"><span>📦</span>Referencias</button><button data-view="proveedores"><span>🚚</span>Proveedores</button><button data-view="historial"><span>🧾</span>Historial</button><button data-view="config"><span>⚙️</span>Config.</button></nav>
+<dialog id="referenceDialog"><form method="dialog" id="referenceForm" class="modal"><div class="modal-head"><h2>Nueva referencia</h2><button value="cancel" class="icon-btn">✕</button></div><div class="grid two"><label>Marca<input name="brand" required placeholder="Xiaomi"></label><label>Modelo<input name="model" required placeholder="Redmi 10 2022"></label></div><div class="grid two"><label>Tipo de reparación<input name="repair" required placeholder="Pantalla LCD"></label><label>Calidad<input name="quality" placeholder="Original / OLED / Incell"></label></div><label>Proveedor<select name="provider" id="dialogProvider"></select></label><label>Costo del repuesto<input name="cost" type="number" min="0" step="100" required placeholder="45000"></label><label>Nota<textarea name="note" rows="2"></textarea></label><button class="primary full" value="default">Guardar referencia</button></form></dialog>
+<dialog id="providerDialog"><form method="dialog" id="providerForm" class="modal"><div class="modal-head"><h2>Nuevo proveedor</h2><button value="cancel" class="icon-btn">✕</button></div><label>Nombre<input name="name" required placeholder="Proveedor 1"></label><label>Entrega<select name="delivery"><option>Recogida presencial</option><option>Envío</option><option>Ambos</option></select></label><label>Costo de envío<input name="shipping" type="number" min="0" step="100" value="0"></label><label>Nota<textarea name="note" rows="2"></textarea></label><button class="primary full" value="default">Guardar proveedor</button></form></dialog>
+<datalist id="brandsList"></datalist><datalist id="modelsList"></datalist><script src="app.js"></script>
+</body></html>
