@@ -13,42 +13,20 @@ except Exception:
 
 DB_PATH = Path(__file__).parent / "cotizador.db"
 
-# IMPORTANTE: el tipo de reparación es independiente de la variante del repuesto.
-# Pantalla es un tipo de reparación; LCD/OLED/INCELL/GX/JK son variantes.
 REPAIRS = [
-    "Pantalla",
-    "Batería",
-    "Puerto de carga",
-    "Flex de Encendido/Volumen",
-    "Cámara Trasera",
-    "Cámara Frontal",
-    "Altavoz / Parlante",
-    "Micrófono",
-    "Placa Base (diagnóstico)",
-    "IC de carga / soldadura",
-    "Cambio de vidrio (glass)",
-    "Sensor de huella",
-    "Face ID / sensores",
-    "Limpieza interna",
-    "Flex Carga",
+    "Pantalla", "Batería", "Puerto de carga", "Flex de Encendido/Volumen",
+    "Cámara Trasera", "Cámara Frontal", "Altavoz / Parlante", "Micrófono",
+    "Placa Base (diagnóstico)", "IC de carga / soldadura", "Cambio de vidrio (glass)",
+    "Sensor de huella", "Face ID / sensores", "Limpieza interna", "Flex Carga",
 ]
 
 DEFAULT_LABOR = {
-    "Pantalla": 55000,
-    "Batería": 40000,
-    "Puerto de carga": 60000,
-    "Flex de Encendido/Volumen": 35000,
-    "Cámara Trasera": 40000,
-    "Cámara Frontal": 35000,
-    "Altavoz / Parlante": 35000,
-    "Micrófono": 35000,
-    "Placa Base (diagnóstico)": 30000,
-    "IC de carga / soldadura": 80000,
-    "Cambio de vidrio (glass)": 70000,
-    "Sensor de huella": 45000,
-    "Face ID / sensores": 50000,
-    "Limpieza interna": 30000,
-    "Flex Carga": 45000,
+    "Pantalla": 55000, "Batería": 40000, "Puerto de carga": 60000,
+    "Flex de Encendido/Volumen": 35000, "Cámara Trasera": 40000,
+    "Cámara Frontal": 35000, "Altavoz / Parlante": 35000, "Micrófono": 35000,
+    "Placa Base (diagnóstico)": 30000, "IC de carga / soldadura": 80000,
+    "Cambio de vidrio (glass)": 70000, "Sensor de huella": 45000,
+    "Face ID / sensores": 50000, "Limpieza interna": 30000, "Flex Carga": 45000,
 }
 
 BRANDS = [
@@ -123,7 +101,6 @@ def init_db():
     for k, v in defaults.items():
         c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (k, str(v)))
 
-    # Migración de versiones anteriores: LCD/OLED dejan de ser el tipo de reparación.
     rows = c.execute("SELECT id,repair,quality FROM references_").fetchall()
     for r in rows:
         repair = normalize(r["repair"])
@@ -137,7 +114,6 @@ def init_db():
         elif repair.upper() in {"DISPLAY", "PANTALLA"}:
             c.execute("UPDATE references_ SET repair='Pantalla', quality=? WHERE id=?", (quality, r["id"]))
 
-    # Limpia duplicados exactos manteniendo el último registro.
     dupes = c.execute("""
         SELECT lower(brand) b, lower(model) m, lower(repair) r, lower(quality) q, provider_id,
                MAX(id) keep_id, GROUP_CONCAT(id) ids
@@ -154,13 +130,6 @@ def init_db():
 
 def settings():
     return {r["key"]: float(r["value"]) for r in db().execute("SELECT key,value FROM settings")}
-
-
-def save_setting(key, value):
-    c = db()
-    c.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
-    c.commit()
-    c.close()
 
 
 def providers():
@@ -197,39 +166,88 @@ def upsert_reference(brand, model, repair, quality, provider_id, cost, note=""):
     return action
 
 
+def parse_price(line):
+    m = re.search(r"(\d{1,3}(?:[.,]\d{3})+|\d{4,6})\s*$", line.strip())
+    if not m:
+        return None, line.strip()
+    return int(m.group(1).replace(".", "").replace(",", "")), line[:m.start()].strip()
+
+
 def parse_pdf(pdf_bytes):
+    """Importa TODO el catálogo: displays y baterías.
+
+    El PDF de MarkBoss contiene bloques separados de DISPLAY y BATERIA.
+    El tipo de reparación se determina por el prefijo de cada línea; la variante
+    solamente se utiliza para pantallas. Las líneas sin precio no se inventan.
+    """
     if PdfReader is None:
         raise RuntimeError("Falta pypdf en requirements.txt")
+
     reader = PdfReader(pdf_bytes)
     current_brand = ""
     rows, ignored = [], []
+
     for page_no, page in enumerate(reader.pages, 1):
-        for raw in (page.extract_text() or "").splitlines():
+        text = page.extract_text() or ""
+        for raw in text.splitlines():
             line = normalize(raw)
             if not line:
                 continue
             upper = line.upper()
-            if "PRECIO" in upper and not upper.startswith("DISPLAY"):
-                current_brand = normalize(upper.replace("PRECIO", ""))
+
+            # Encabezados como XIAOMI PRECIO, MOTOROLA PRECIO, etc.
+            if "PRECIO" in upper and not re.match(r"^D?DISPLAY\b|^BATER[IÍ]A\b", upper):
+                heading = re.sub(r"\bPRECIO\b", "", upper).strip()
+                if heading:
+                    current_brand = heading
                 continue
-            if not upper.startswith("DISPLAY "):
+
+            # El PDF tiene tanto DISPLAY como alguna línea escrita DDISPLAY.
+            is_display = bool(re.match(r"^D?DISPLAY\b", upper))
+            is_battery = bool(re.match(r"^BATER[IÍ]A\b", upper))
+            if not (is_display or is_battery):
                 continue
-            m = re.search(r"(\d{1,3}(?:[.,]\d{3})+)\s*$", line)
-            if not m:
-                ignored.append((page_no, line)); continue
-            cost = int(m.group(1).replace(".", "").replace(",", ""))
-            desc = re.sub(r"^DISPLAY\s+", "", line[:m.start()].strip(), flags=re.I)
-            brand = current_brand.title() if current_brand else "Otra"
-            if desc.upper().startswith(brand.upper() + " "):
-                desc = desc[len(brand):].strip()
-            quality = screen_quality(desc)
-            model = desc
-            for token in ["SOFT OLED", "INCELLL", "INCELL", "CON MARCO", "C/M", "OLED", "ORIGINAL", "GX", "JK", "LCD"]:
-                model = re.sub(rf"(?<!\w){re.escape(token)}(?!\w)", " ", model, flags=re.I)
-            model = normalize(model).title()
+
+            cost, desc = parse_price(line)
+            if cost is None:
+                ignored.append((page_no, line, "sin precio"))
+                continue
+
+            if is_display:
+                desc = re.sub(r"^D?DISPLAY\s+", "", desc, flags=re.I).strip()
+                repair = "Pantalla"
+                quality = screen_quality(desc)
+                model = desc
+                for token in [
+                    "SOFT OLED", "INCELLL", "INCELL", "CON MARCO", "C/M",
+                    "OLED", "ORIGINAL", "GX", "JK", "LCD"
+                ]:
+                    model = re.sub(rf"(?<!\w){re.escape(token)}(?!\w)", " ", model, flags=re.I)
+                model = normalize(model).strip(" -/").title()
+            else:
+                desc = re.sub(r"^BATER[IÍ]A\s+", "", desc, flags=re.I).strip()
+                repair = "Batería"
+                quality = "ESTÁNDAR"
+                model = normalize(desc).strip(" -/").title()
+
+            brand = normalize(current_brand).title() if current_brand else "Otra"
+
+            # En algunos bloques la marca también aparece después del prefijo.
+            if brand and model.upper().startswith(brand.upper() + " "):
+                model = model[len(brand):].strip()
             if not model:
-                ignored.append((page_no, line)); continue
-            rows.append({"brand": brand, "model": model, "repair": "Pantalla", "quality": quality, "cost": cost, "page": page_no})
+                ignored.append((page_no, line, "modelo vacío"))
+                continue
+
+            rows.append({
+                "brand": brand,
+                "model": model,
+                "repair": repair,
+                "quality": quality,
+                "cost": cost,
+                "page": page_no,
+            })
+
     return rows, ignored
 
 
@@ -243,9 +261,14 @@ def import_rows(rows, provider_name):
         p = next(x for x in providers() if x["name"].lower() == provider_name.lower())
     added = updated = 0
     for r in rows:
-        action = upsert_reference(r["brand"], r["model"], r["repair"], r["quality"], p["id"], r["cost"], f"PDF MarkBoss · página {r.get('page','')}")
-        if action == "nueva": added += 1
-        else: updated += 1
+        action = upsert_reference(
+            r["brand"], r["model"], r["repair"], r["quality"], p["id"],
+            r["cost"], f"PDF MarkBoss · página {r.get('page','')}"
+        )
+        if action == "nueva":
+            added += 1
+        else:
+            updated += 1
     return added, updated
 
 
@@ -259,7 +282,7 @@ def normalize_whatsapp_line(line):
     up = desc.upper()
     if "BATER" in up:
         repair = "Batería"
-        quality = "Batería"
+        quality = "ESTÁNDAR"
     elif any(x in up for x in ["LCD", "INCELL", "DISPLAY", "PANTALL", "OLED", "GX", "JK"]):
         repair = "Pantalla"
         quality = screen_quality(up)
@@ -305,8 +328,10 @@ def reset_quote():
 
 st.set_page_config(page_title="BLACK TECH · Cotizador", page_icon="💰", layout="wide", initial_sidebar_state="collapsed")
 init_db()
-if "quote" not in st.session_state: st.session_state.quote = []
-if "labor_override" not in st.session_state: st.session_state.labor_override = 0
+if "quote" not in st.session_state:
+    st.session_state.quote = []
+if "labor_override" not in st.session_state:
+    st.session_state.labor_override = 0
 
 st.markdown("""
 <style>
@@ -327,6 +352,7 @@ allrefs = list(refs())
 
 if page == "💰 Cotizar":
     st.header("Nueva cotización")
+    st.caption("Marca y modelo son listas dependientes; el tipo de reparación controla qué repuestos aparecen.")
     brands = sorted(set(r["brand"] for r in allrefs), key=str.lower)
     a, b = st.columns(2)
     brand = a.selectbox("Marca", [""] + brands, format_func=lambda x: "Selecciona una marca..." if not x else x, key="q_brand")
@@ -334,7 +360,6 @@ if page == "💰 Cotizar":
     model = b.selectbox("Modelo", [""] + models, format_func=lambda x: "Selecciona un modelo..." if not x else x, key="q_model")
     available = [r for r in allrefs if (not brand or r["brand"].lower() == brand.lower()) and (not model or r["model"].lower() == model.lower())]
 
-    # SIEMPRE mostrar todos los tipos de reparación. No depender de lo que exista en el catálogo.
     repair = st.selectbox("Tipo de reparación", [""] + REPAIRS, format_func=lambda x: "Selecciona el tipo de reparación..." if not x else x, key="q_repair")
     matches = [r for r in available if r["repair"].lower() == repair.lower()] if repair else []
 
@@ -345,10 +370,7 @@ if page == "💰 Cotizar":
         if st.button("＋ Agregar reparación al cálculo", type="primary", use_container_width=True):
             add_quote(selected); st.rerun()
     elif repair:
-        if repair == "Pantalla":
-            st.info("No hay pantallas registradas para este modelo todavía. Puedes importarlas desde el catálogo MarkBoss o agregarlas manualmente en Referencias.")
-        else:
-            st.info("Este tipo de reparación está disponible en el cotizador, pero todavía no tiene una referencia de repuesto registrada para este modelo.")
+        st.info("Este tipo de reparación está disponible en el cotizador, pero todavía no tiene una referencia de repuesto registrada para este modelo.")
 
     if st.session_state.quote:
         st.divider(); st.subheader("Reparaciones agregadas")
@@ -375,7 +397,8 @@ if page == "💰 Cotizar":
             payload = {"items": st.session_state.quote, "parts": parts, "logistics": logistics, "labor": labor, "base": base, "recommended": prec}
             cdb = db(); cdb.execute("INSERT INTO history(created_at,data) VALUES(?,?)", (datetime.now().isoformat(timespec="seconds"), json.dumps(payload, ensure_ascii=False))); cdb.commit(); cdb.close()
             st.success("Cotización guardada.")
-        if b.button("Limpiar cotización", use_container_width=True): reset_quote(); st.rerun()
+        if b.button("Limpiar cotización", use_container_width=True):
+            reset_quote(); st.rerun()
     else:
         st.info("Selecciona una reparación y una referencia para agregarla al cálculo.")
 
@@ -417,7 +440,7 @@ elif page == "📚 Referencias":
 
 elif page == "📄 Catálogo PDF":
     st.header("Importar catálogo de MarkBoss")
-    st.caption("Solo el tipo de reparación es Pantalla. LCD/OLED/INCELL/GX/JK/CON MARCO quedan como variantes.")
+    st.caption("Importa pantallas y baterías. En pantallas, LCD/OLED/INCELL/GX/JK/CON MARCO son variantes; las baterías quedan como tipo Batería.")
     uploaded = st.file_uploader("PDF de precios", type=["pdf"], key="pdf_upload")
     if uploaded:
         if st.button("Analizar PDF", type="primary", use_container_width=True):
@@ -425,12 +448,17 @@ elif page == "📄 Catálogo PDF":
                 rows, ignored = parse_pdf(uploaded.getvalue())
                 st.session_state.pdf_rows = rows
                 st.session_state.pdf_ignored = ignored
-                st.success(f"Encontradas {len(rows)} referencias con precio. {len(ignored)} líneas omitidas.")
+                screens = sum(1 for r in rows if r["repair"] == "Pantalla")
+                batteries = sum(1 for r in rows if r["repair"] == "Batería")
+                st.success(f"Encontradas {len(rows)} referencias con precio: {screens} pantallas y {batteries} baterías. {len(ignored)} líneas sin precio fueron omitidas.")
             except Exception as e:
                 st.error(f"No se pudo analizar el PDF: {e}")
         rows = st.session_state.get("pdf_rows", [])
         if rows:
-            st.dataframe([{"Marca":r["brand"], "Modelo":r["model"], "Tipo":r["repair"], "Variante":r["quality"], "Precio":money(r["cost"]), "Página":r["page"]} for r in rows], use_container_width=True, hide_index=True)
+            st.dataframe([
+                {"Marca":r["brand"], "Modelo":r["model"], "Tipo":r["repair"], "Variante":r["quality"], "Precio":money(r["cost"]), "Página":r["page"]}
+                for r in rows
+            ], use_container_width=True, hide_index=True)
             if st.button("Importar / actualizar catálogo MarkBoss", type="primary", use_container_width=True):
                 a, u = import_rows(rows, "MarkBoss Repuestos")
                 st.success(f"Catálogo actualizado: {a} nuevas · {u} actualizadas.")
@@ -439,20 +467,23 @@ elif page == "📄 Catálogo PDF":
 
 elif page == "📱 WhatsApp":
     st.header("Carga rápida por WhatsApp")
-    st.caption("El tipo de reparación también conserva todas las categorías; las líneas reconocidas se clasifican automáticamente.")
+    st.caption("Las líneas reconocidas se clasifican automáticamente como pantalla o batería.")
     ps = list(providers()); provider_names = [p["name"] for p in ps]
     if not provider_names:
         st.warning("Crea primero un proveedor.")
     else:
         provider_name = st.selectbox("Proveedor", provider_names)
-        text = st.text_area("Lista de WhatsApp", height=240, placeholder="Xiaomi Redmi 13 INCELL 42.000\nXiaomi Redmi 13 OLED C/M 65.000")
+        text = st.text_area("Lista de WhatsApp", height=240, placeholder="Xiaomi Redmi 13 INCELL 42.000\nXiaomi Redmi 13 BATERIA 25.000")
         if st.button("Analizar lista", type="primary", use_container_width=True):
             parsed = [normalize_whatsapp_line(x) for x in text.splitlines()]
             st.session_state.wa_rows = [x for x in parsed if x]
             st.success(f"Se reconocieron {len(st.session_state.wa_rows)} líneas.")
         rows = st.session_state.get("wa_rows", [])
         if rows:
-            st.dataframe([{"Marca":r["brand"], "Modelo":r["model"], "Tipo":r["repair"], "Variante":r["quality"], "Costo":money(r["cost"])} for r in rows], use_container_width=True, hide_index=True)
+            st.dataframe([
+                {"Marca":r["brand"], "Modelo":r["model"], "Tipo":r["repair"], "Variante":r["quality"], "Costo":money(r["cost"])}
+                for r in rows
+            ], use_container_width=True, hide_index=True)
             if st.button("Guardar / actualizar referencias", type="primary", use_container_width=True):
                 a, u = import_rows(rows, provider_name)
                 st.success(f"Guardado: {a} nuevas · {u} actualizadas.")
