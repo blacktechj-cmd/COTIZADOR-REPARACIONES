@@ -196,14 +196,12 @@ def parse_pdf(pdf_bytes):
                 continue
             upper = line.upper()
 
-            # Encabezados como XIAOMI PRECIO, MOTOROLA PRECIO, etc.
             if "PRECIO" in upper and not re.match(r"^D?DISPLAY\b|^BATER[IÍ]A\b", upper):
                 heading = re.sub(r"\bPRECIO\b", "", upper).strip()
                 if heading:
                     current_brand = heading
                 continue
 
-            # El PDF tiene tanto DISPLAY como alguna línea escrita DDISPLAY.
             is_display = bool(re.match(r"^D?DISPLAY\b", upper))
             is_battery = bool(re.match(r"^BATER[IÍ]A\b", upper))
             if not (is_display or is_battery):
@@ -232,8 +230,6 @@ def parse_pdf(pdf_bytes):
                 model = normalize(desc).strip(" -/").title()
 
             brand = normalize(current_brand).title() if current_brand else "Otra"
-
-            # En algunos bloques la marca también aparece después del prefijo.
             if brand and model.upper().startswith(brand.upper() + " "):
                 model = model[len(brand):].strip()
             if not model:
@@ -327,6 +323,27 @@ def reset_quote():
     st.session_state.labor_override = 0
 
 
+def history_equipment(data):
+    items = data.get("items", [])
+    if not items:
+        return "Equipo no especificado"
+    first = items[0]
+    equipment = f"{first.get('brand', '').strip()} {first.get('model', '').strip()}".strip()
+    return equipment or "Equipo no especificado"
+
+
+def history_repairs(data):
+    items = data.get("items", [])
+    repairs = []
+    for item in items:
+        repair = str(item.get("repair", "")).strip()
+        quality = str(item.get("quality", "")).strip()
+        text = f"{repair} ({quality})" if quality and quality != "ESTÁNDAR" else repair
+        if text and text not in repairs:
+            repairs.append(text)
+    return ", ".join(repairs) or "Reparación no especificada"
+
+
 st.set_page_config(page_title="BLACK TECH · Cotizador", page_icon="💰", layout="wide", initial_sidebar_state="collapsed")
 init_db()
 if "quote" not in st.session_state:
@@ -341,6 +358,9 @@ st.markdown("""
 .hero h1{margin:0;font-size:1.9rem;letter-spacing:.08em}.hero p{margin:4px 0 0;color:#cbd5e1}
 .navbox{background:#f8fafc;border:1px solid #e2e8f0;padding:10px 12px;border-radius:16px;margin-bottom:18px}
 .big-result{background:linear-gradient(135deg,#eff6ff,#fff);border:2px solid #2563eb;border-radius:18px;padding:18px;text-align:center;margin:14px 0}.big-result .value{font-size:2.25rem;font-weight:800;color:#1d4ed8}.big-result .label{color:#64748b;font-size:.88rem}
+.reference-box{background:#f8fafc;border:1px solid #e2e8f0;border-radius:16px;padding:12px 14px;margin:8px 0 14px}
+.history-card{border:1px solid #e2e8f0;border-radius:16px;padding:14px;margin:8px 0;background:#fff}
+.history-title{font-size:1.05rem;font-weight:750;margin-bottom:3px}.history-meta{color:#64748b;font-size:.88rem}
 </style>
 """, unsafe_allow_html=True)
 st.markdown('<div class="hero"><h1>BLACK TECH</h1><p>Cotizador profesional de reparaciones</p></div>', unsafe_allow_html=True)
@@ -365,10 +385,21 @@ if page == "💰 Cotizar":
     matches = [r for r in available if r["repair"].lower() == repair.lower()] if repair else []
 
     if matches:
+        st.markdown('<div class="reference-box">', unsafe_allow_html=True)
+        st.caption("Selecciona la referencia exacta del repuesto")
         labels = [f"{r['quality'] or 'ESTÁNDAR'} · {r['provider']} · {money(r['cost'])}" for r in matches]
-        idx = st.selectbox("Referencia / variante / proveedor", range(len(matches)), format_func=lambda i: labels[i], key="q_ref")
-        selected = matches[idx]
-        if st.button("＋ Agregar reparación al cálculo", type="primary", use_container_width=True):
+        if hasattr(st, "pills"):
+            selected_label = st.pills("Referencia", labels, selection_mode="single", label_visibility="collapsed", key="q_ref_pills")
+            selected = matches[labels.index(selected_label)] if selected_label in labels else None
+        else:
+            idx = st.selectbox("Referencia", range(len(matches)), format_func=lambda i: labels[i], key="q_ref")
+            selected = matches[idx]
+        if selected:
+            x, y = st.columns([4, 1])
+            x.write(f"**{selected['quality'] or 'ESTÁNDAR'}** · {selected['provider']}")
+            y.write(f"**{money(selected['cost'])}**")
+        st.markdown('</div>', unsafe_allow_html=True)
+        if st.button("＋ Agregar reparación al cálculo", type="primary", use_container_width=True, disabled=selected is None):
             add_quote(selected); st.rerun()
     elif repair:
         st.info("Este tipo de reparación está disponible en el cotizador, pero todavía no tiene una referencia de repuesto registrada para este modelo.")
@@ -395,9 +426,18 @@ if page == "💰 Cotizar":
         a.metric("Mínimo", money(pmin)); b.metric("RECOMENDADO", money(prec)); c.metric("Premium", money(pprem))
         a, b = st.columns(2)
         if a.button("Guardar cotización", type="primary", use_container_width=True):
-            payload = {"items": st.session_state.quote, "parts": parts, "logistics": logistics, "labor": labor, "base": base, "recommended": prec}
+            payload = {
+                "items": [dict(x) for x in st.session_state.quote],
+                "parts": parts,
+                "logistics": logistics,
+                "labor": labor,
+                "base": base,
+                "recommended": prec,
+                "premium": pprem,
+                "saved_at": datetime.now().isoformat(timespec="seconds"),
+            }
             cdb = db(); cdb.execute("INSERT INTO history(created_at,data) VALUES(?,?)", (datetime.now().isoformat(timespec="seconds"), json.dumps(payload, ensure_ascii=False))); cdb.commit(); cdb.close()
-            st.success("Cotización guardada.")
+            st.success("Cotización guardada en el historial.")
         if b.button("Limpiar cotización", use_container_width=True):
             reset_quote(); st.rerun()
     else:
@@ -545,13 +585,60 @@ elif page == "⚙️ Configuración":
         cdb.commit(); cdb.close(); st.success("Configuración guardada.")
 
 elif page == "🧾 Historial":
-    st.header("Historial")
+    st.header("Historial de reparaciones")
+    st.caption("Esta sección ahora funciona como una base de consulta: busca un modelo y revisa qué reparaciones, repuestos y costos se usaron anteriormente.")
+
+    search = st.text_input(
+        "Buscar equipo o reparación",
+        placeholder="Ej. Redmi 13, iPhone 13, pantalla, batería...",
+        key="history_search",
+    )
+
     rows = db().execute("SELECT * FROM history ORDER BY id DESC").fetchall()
-    if not rows:
-        st.info("Todavía no hay cotizaciones guardadas.")
+    history_items = []
+    term = search.strip().lower()
     for r in rows:
         data = json.loads(r["data"])
-        with st.expander(f"{r['created_at']} · {money(data.get('recommended', 0))}"):
-            for item in data.get("items", []):
-                st.write(f"• {item['brand']} {item['model']} · {item['repair']} · {item['quality']} · {money(item['cost'])}")
-            st.write(f"**Costo real:** {money(data.get('base', 0))} · **Recomendado:** {money(data.get('recommended', 0))}")
+        equipment = history_equipment(data)
+        repairs = history_repairs(data)
+        haystack = " ".join([
+            equipment,
+            repairs,
+            " ".join(str(x.get("quality", "")) for x in data.get("items", [])),
+        ]).lower()
+        if not term or term in haystack:
+            history_items.append((r, data, equipment, repairs))
+
+    total = len(history_items)
+    st.caption(f"{total} cotización(es) encontrada(s).")
+
+    if not rows:
+        st.info("Todavía no hay cotizaciones guardadas.")
+    elif not history_items:
+        st.warning("No encontramos una cotización que coincida con esa búsqueda.")
+    else:
+        for r, data, equipment, repairs in history_items:
+            with st.container(border=True):
+                st.markdown(
+                    f'<div class="history-title">📱 {equipment}</div>'
+                    f'<div class="history-meta">📅 {r["created_at"]} · 🛠️ {repairs}</div>',
+                    unsafe_allow_html=True,
+                )
+                a, b, c = st.columns(3)
+                a.metric("Repuestos", money(data.get("parts", 0)))
+                b.metric("Costo real", money(data.get("base", 0)))
+                c.metric("Recomendado", money(data.get("recommended", 0)))
+
+                with st.expander("Ver repuestos y detalles"):
+                    for item in data.get("items", []):
+                        quality = item.get("quality") or "ESTÁNDAR"
+                        st.write(
+                            f"• **{item.get('repair', 'Reparación')}** · "
+                            f"{quality} · {item.get('provider', 'Proveedor no registrado')} · "
+                            f"{money(item.get('cost', 0))}"
+                        )
+                    st.write(
+                        f"**Logística:** {money(data.get('logistics', 0))} · "
+                        f"**Mano de obra:** {money(data.get('labor', 0))} · "
+                        f"**Premium:** {money(data.get('premium', 0))}"
+                    )
