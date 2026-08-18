@@ -1,0 +1,60 @@
+name: Fix PDF parser
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Patch PdfReader bytes handling
+        shell: python
+        run: |
+          from pathlib import Path
+
+          p = Path("app.py")
+          text = p.read_text(encoding="utf-8")
+
+          changed = False
+          if "import io\n" not in text:
+              text = text.replace("import json\n", "import io\nimport json\n", 1)
+              changed = True
+
+          old = "reader = PdfReader(pdf_bytes)"
+          new = "reader = PdfReader(io.BytesIO(pdf_bytes))"
+          if old in text:
+              text = text.replace(old, new, 1)
+              changed = True
+
+          # Make the uploader reject non-PDF data cleanly instead of exposing
+          # a Python traceback to the user.
+          marker = 'uploaded = st.file_uploader("PDF de precios", type=["pdf"], key="pdf_upload")'
+          replacement = marker + '\n    if uploaded and not uploaded.name.lower().endswith(".pdf"):\n        st.error("El archivo seleccionado no parece ser un PDF válido.")\n        uploaded = None'
+          if marker in text and replacement not in text:
+              text = text.replace(marker, replacement, 1)
+              changed = True
+
+          if changed:
+              p.write_text(text, encoding="utf-8")
+          print("Patched:", changed)
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No patch needed"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.py
+          git commit -m "Fix PDF upload bytes handling"
+          git push
