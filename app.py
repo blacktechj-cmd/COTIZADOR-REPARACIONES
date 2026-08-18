@@ -20,8 +20,7 @@ def init_db():
     """)
     if c.execute("SELECT COUNT(*) n FROM providers").fetchone()["n"]==0:
         c.execute("INSERT INTO providers(name,delivery,shipping,travel,note) VALUES(?,?,?,?,?)",("MarkBoss Repuestos","Recogida presencial",0,12000,"Desplazamiento estimado."))
-    defaults={"margin_min":18,"margin_rec":30,"margin_prem":45,"rounding":1000,"bundle_labor":75000}
-    defaults.update({f"labor_{k}":v for k,v in DEFAULT_LABOR.items()})
+    defaults={"margin_min":18,"margin_rec":30,"margin_prem":45,"rounding":1000,"bundle_labor":75000}; defaults.update({f"labor_{k}":v for k,v in DEFAULT_LABOR.items()})
     for k,v in defaults.items(): c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)",(k,str(v)))
     p=c.execute("SELECT id FROM providers WHERE lower(name)=lower(?)",("MarkBoss Repuestos",)).fetchone()["id"]
     for repair,quality,cost in [("Pantalla LCD","LCD",35000),("Pantalla LCD","LCD con marco",38000),("Batería","Batería",25000)]:
@@ -35,74 +34,105 @@ def refs(): return db().execute("SELECT r.*,p.name provider,p.delivery,p.shippin
 def providers(): return db().execute("SELECT * FROM providers ORDER BY name").fetchall()
 def save_setting(k,v):
     c=db(); c.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(k,str(v))); c.commit(); c.close()
-def reset_quote(): st.session_state.quote=[]
+def reset_quote(): st.session_state.quote=[]; st.session_state.labor_override=0
 def add_quote(r):
     if r["id"] not in [x["id"] for x in st.session_state.quote]: st.session_state.quote.append(dict(r))
 def calculate(items):
     s=settings(); parts=sum(int(x["cost"]) for x in items); ps={p["id"]:p for p in providers()}; logistics=0
     for pid in {x["provider_id"] for x in items}:
-        p=ps[pid]; logistics += int(p["shipping"] or 0)+int(p["travel"] or 0) if p["delivery"] in ("Recogida presencial","Ambos") else int(p["shipping"] or 0)
+        p=ps[pid]
+        logistics += int(p["shipping"] or 0) + int(p["travel"] or 0) if p["delivery"] in ("Recogida presencial","Ambos") else int(p["shipping"] or 0)
     override=int(st.session_state.get("labor_override",0)); labor=override or (int(s.get("bundle_labor",75000)) if len(items)>1 else int(s.get(f"labor_{items[0]['repair']}",DEFAULT_LABOR.get(items[0]["repair"],40000))) if items else 0)
     base=parts+logistics+labor; rnd=int(s.get("rounding",1000)) or 1; price=lambda m: round((base*(1+m/100))/rnd)*rnd
     return parts,logistics,labor,base,price(s["margin_min"]),price(s["margin_rec"]),price(s["margin_prem"])
 
-st.set_page_config(page_title="BLACK TECH · Cotizador",page_icon="💰",layout="wide")
+st.set_page_config(page_title="BLACK TECH · Cotizador",page_icon="💰",layout="wide",initial_sidebar_state="collapsed")
 init_db()
 if "quote" not in st.session_state: st.session_state.quote=[]
-st.title("BLACK TECH")
-st.caption("Base inteligente de precios para reparaciones")
+if "labor_override" not in st.session_state: st.session_state.labor_override=0
+st.markdown("""
+<style>
+.block-container{max-width:1180px;padding-top:1.4rem;padding-bottom:4rem}
+.hero{background:linear-gradient(135deg,#111827 0%,#1f2937 65%,#2563eb 100%);color:white;padding:24px 26px;border-radius:18px;margin-bottom:20px;box-shadow:0 8px 28px rgba(15,23,42,.15)}
+.hero h1{margin:0;font-size:2rem;letter-spacing:.08em}.hero p{margin:5px 0 0;color:#cbd5e1}
+.big-result{background:linear-gradient(135deg,#eff6ff,#fff);border:2px solid #2563eb;border-radius:18px;padding:20px;text-align:center;margin:14px 0}.big-result .value{font-size:2.2rem;font-weight:800;color:#1d4ed8}.big-result .label{color:#64748b;font-size:.9rem}
+button[kind="primary"]{border-radius:10px}
+</style>
+""",unsafe_allow_html=True)
+st.markdown('<div class="hero"><h1>BLACK TECH</h1><p>Cotizador profesional de reparaciones · costos, logística y precio recomendado</p></div>',unsafe_allow_html=True)
 page=st.sidebar.radio("Menú",["Cotizar","Referencias","Proveedores","Configuración","Historial"])
 
 if page=="Cotizar":
-    st.header("¿Cuánto cobrar?")
-    a,b=st.columns(2); brand=a.text_input("Marca",placeholder="Xiaomi"); model=b.text_input("Modelo / referencia",placeholder="Redmi 13")
-    allrefs=list(refs()); repairs=sorted(set(REPAIRS+[r["repair"] for r in allrefs])); repair=st.selectbox("Tipo de reparación",[""]+repairs,format_func=lambda x:"Selecciona..." if not x else x)
-    matches=[r for r in allrefs if (not brand or brand.lower() in r["brand"].lower()) and (not model or model.lower() in r["model"].lower()) and (not repair or r["repair"]==repair)]
+    st.header("¿Cuánto cobrar?"); st.caption("Busca el equipo, selecciona la reparación y elige la variante exacta del repuesto.")
+    a,b=st.columns(2); brand=a.text_input("Marca",placeholder="Xiaomi",key="q_brand"); model=b.text_input("Modelo / referencia",placeholder="Redmi 13",key="q_model")
+    allrefs=list(refs()); repairs=sorted(set(REPAIRS+[r["repair"] for r in allrefs])); repair=st.selectbox("Tipo de reparación",[""]+repairs,format_func=lambda x:"Selecciona el tipo de reparación..." if not x else x,key="q_repair")
+    matches=[r for r in allrefs if (not brand or brand.strip().lower() in r["brand"].lower()) and (not model or model.strip().lower() in r["model"].lower()) and (not repair or r["repair"]==repair)]
     if matches:
         labels=[f"{r['quality'] or 'Sin variante'} · {r['provider']} · {money(r['cost'])}" for r in matches]
-        idx=st.selectbox("Variante / proveedor",range(len(matches)),format_func=lambda i:labels[i]); selected=matches[idx]
-        if st.button("＋ Agregar reparación al cálculo",type="primary"): add_quote(selected); st.rerun()
+        idx=st.selectbox("Variante / proveedor",range(len(matches)),format_func=lambda i:labels[i],key="q_ref"); selected=matches[idx]
+        st.info(f"{selected['brand']} {selected['model']} · {selected['repair']} · {selected['quality'] or 'Sin variante'} · {selected['provider']} · {money(selected['cost'])}")
+        if st.button("＋ Agregar reparación al cálculo",type="primary",use_container_width=True): add_quote(selected); st.rerun()
     elif brand or model or repair: st.warning("No hay referencias guardadas que coincidan con esta combinación.")
     if st.session_state.quote:
-        st.subheader("Reparaciones agregadas")
+        st.divider(); st.subheader("Reparaciones agregadas")
         for i,r in enumerate(st.session_state.quote):
-            x,y,z=st.columns([5,2,1]); x.write(f"**{r['repair']} · {r['quality'] or 'Sin variante'}**"); x.caption(f"{r['brand']} {r['model']} · {r['provider']}"); y.write(money(r['cost']))
-            if z.button("Quitar",key=f"remove_{i}"): st.session_state.quote.pop(i); st.rerun()
-        default_labor=calculate(st.session_state.quote)[2]; st.number_input("Mano de obra",min_value=0,step=1000,value=int(default_labor),key="labor_override")
+            with st.container(border=True):
+                x,y,z=st.columns([5,2,1]); x.write(f"**{r['repair']} · {r['quality'] or 'Sin variante'}**"); x.caption(f"{r['brand']} {r['model']} · {r['provider']}"); y.write(money(r['cost']))
+                if z.button("Quitar",key=f"remove_{i}"): st.session_state.quote.pop(i); st.rerun()
+        default_labor=calculate(st.session_state.quote)[2]
+        if st.session_state.get("labor_override",0)==0: st.session_state.labor_override=int(default_labor)
+        st.number_input("Mano de obra",min_value=0,step=1000,key="labor_override",help="Ajustable para esta cotización.")
         parts,logistics,labor,base,pmin,prec,pprem=calculate(st.session_state.quote)
-        a,b,c=st.columns(3); a.metric("Repuestos",money(parts)); b.metric("Logística",money(logistics)); c.metric("Mano de obra",money(labor)); st.metric("COSTO REAL",money(base))
+        a,b,c=st.columns(3); a.metric("Repuestos",money(parts)); b.metric("Logística",money(logistics)); c.metric("Mano de obra",money(labor))
+        st.markdown(f'<div class="big-result"><div class="label">COSTO REAL DE LA REPARACIÓN</div><div class="value">{money(base)}</div></div>',unsafe_allow_html=True)
         a,b,c=st.columns(3); a.metric("Mínimo",money(pmin)); b.metric("RECOMENDADO",money(prec)); c.metric("Premium",money(pprem))
-        if st.button("Guardar cotización"): 
+        st.caption(f"Recomendado = costo real {money(base)} + margen configurado del 30%, redondeado a $1.000.")
+        a,b=st.columns(2)
+        if a.button("Guardar cotización",type="primary",use_container_width=True):
             cdb=db(); payload={"items":st.session_state.quote,"parts":parts,"logistics":logistics,"labor":labor,"base":base,"recommended":prec}; cdb.execute("INSERT INTO history(created_at,data) VALUES(?,?)",(datetime.now().isoformat(timespec="seconds"),json.dumps(payload,ensure_ascii=False))); cdb.commit(); cdb.close(); st.success("Cotización guardada.")
-        if st.button("Limpiar cotización"): reset_quote(); st.rerun()
+        if b.button("Limpiar cotización",use_container_width=True): reset_quote(); st.rerun()
     else: st.info("Selecciona una referencia y agrégala al cálculo. Puedes agregar varias reparaciones.")
 
 elif page=="Referencias":
-    st.header("Referencias"); st.caption("Base de repuestos. Aquí no se cotiza.")
-    ps=providers()
-    with st.form("new_ref"):
-        a,b=st.columns(2); brand=a.text_input("Marca"); model=b.text_input("Modelo")
-        a,b=st.columns(2); repair=a.selectbox("Tipo de reparación",REPAIRS); quality=b.text_input("Variante / calidad",placeholder="LCD con marco")
-        provider=a.selectbox("Proveedor",ps,format_func=lambda p:p["name"]); cost=b.number_input("Costo del repuesto",min_value=0,step=1000); note=st.text_area("Nota")
-        if st.form_submit_button("Guardar referencia",type="primary"):
-            c=db(); c.execute("INSERT INTO references_(brand,model,repair,quality,provider_id,cost,note) VALUES(?,?,?,?,?,?,?)",(brand.strip(),model.strip(),repair,quality.strip(),provider["id"],cost,note.strip())); c.commit(); c.close(); st.success("Referencia guardada."); st.rerun()
-    q=st.text_input("Buscar referencias")
-    for r in [x for x in refs() if q.lower() in " ".join(str(x[k] or "") for k in ["brand","model","repair","quality","provider"]).lower()]:
-        with st.expander(f"{r['brand']} · {r['model']} · {r['repair']} · {r['quality'] or 'Sin variante'}"): st.write(f"Proveedor: **{r['provider']}** · Repuesto: **{money(r['cost'])}**"); st.caption(r["note"] or "Sin nota")
+    st.header("Referencias"); st.caption("Catálogo de repuestos por modelo, tipo, variante y proveedor.")
+    ps=list(providers())
+    if not ps: st.error("Primero debes crear al menos un proveedor.")
+    else:
+        with st.form("new_ref"):
+            a,b=st.columns(2); brand=a.text_input("Marca",placeholder="Xiaomi"); model=b.text_input("Modelo",placeholder="Redmi 13")
+            a,b=st.columns(2); repair=a.selectbox("Tipo de reparación",REPAIRS); quality=b.text_input("Variante / calidad",placeholder="LCD con marco")
+            provider_names=[p["name"] for p in ps]; provider_name=a.selectbox("Proveedor",provider_names); provider_id=next(p["id"] for p in ps if p["name"]==provider_name)
+            cost=b.number_input("Costo del repuesto",min_value=0,step=1000); note=st.text_area("Nota")
+            if st.form_submit_button("Guardar referencia",type="primary",use_container_width=True):
+                brand_clean=brand.strip(); model_clean=model.strip(); quality_clean=quality.strip()
+                if not brand_clean or not model_clean or cost<=0: st.error("Marca, modelo y costo son obligatorios.")
+                else:
+                    c=db(); existing=c.execute("SELECT id FROM references_ WHERE lower(brand)=lower(?) AND lower(model)=lower(?) AND lower(repair)=lower(?) AND lower(quality)=lower(?) AND provider_id=?",(brand_clean,model_clean,repair,quality_clean,provider_id)).fetchone()
+                    if existing:
+                        c.execute("UPDATE references_ SET cost=?,note=? WHERE id=?",(cost,note.strip(),existing["id"])); message="Referencia existente actualizada."
+                    else:
+                        c.execute("INSERT INTO references_(brand,model,repair,quality,provider_id,cost,note) VALUES(?,?,?,?,?,?,?)",(brand_clean,model_clean,repair,quality_clean,provider_id,cost,note.strip())); message="Referencia guardada."
+                    c.commit(); c.close(); st.success(message); st.rerun()
+    q=st.text_input("Buscar referencias",placeholder="Ej. Redmi 13, pantalla, marco..."); data=[x for x in refs() if q.strip().lower() in " ".join(str(x[k] or "") for k in ["brand","model","repair","quality","provider"]).lower()]
+    st.caption(f"{len(data)} referencia(s) encontrada(s).")
+    for r in data:
+        with st.expander(f"{r['brand']} · {r['model']} · {r['repair']} · {r['quality'] or 'Sin variante'}"): st.write(f"**Proveedor:** {r['provider']} · **Repuesto:** {money(r['cost'])}"); st.caption(r["note"] or "Sin nota")
 
 elif page=="Proveedores":
-    st.header("Proveedores")
+    st.header("Proveedores"); st.caption("Define cómo recibes el repuesto y los costos de logística.")
     for p in providers():
         with st.expander(p["name"]):
             with st.form(f"p{p['id']}"):
                 name=st.text_input("Nombre",p["name"]); delivery=st.selectbox("Entrega",["Recogida presencial","Envío","Ambos"],index=["Recogida presencial","Envío","Ambos"].index(p["delivery"])); a,b=st.columns(2); shipping=a.number_input("Envío",min_value=0,step=1000,value=int(p["shipping"])); travel=b.number_input("Desplazamiento",min_value=0,step=1000,value=int(p["travel"])); note=st.text_area("Nota",p["note"] or "")
-                if st.form_submit_button("Guardar cambios"):
+                if st.form_submit_button("Guardar cambios",use_container_width=True):
                     c=db(); c.execute("UPDATE providers SET name=?,delivery=?,shipping=?,travel=?,note=? WHERE id=?",(name.strip(),delivery,shipping,travel,note,p["id"])); c.commit(); c.close(); st.rerun()
     st.divider()
     with st.form("new_provider"):
         name=st.text_input("Nuevo proveedor"); delivery=st.selectbox("Entrega",["Recogida presencial","Envío","Ambos"]); a,b=st.columns(2); shipping=a.number_input("Envío",min_value=0,step=1000); travel=b.number_input("Desplazamiento",min_value=0,step=1000); note=st.text_area("Nota")
-        if st.form_submit_button("Agregar proveedor"):
-            c=db(); c.execute("INSERT INTO providers(name,delivery,shipping,travel,note) VALUES(?,?,?,?,?)",(name.strip(),delivery,shipping,travel,note)); c.commit(); c.close(); st.rerun()
+        if st.form_submit_button("Agregar proveedor",use_container_width=True):
+            if not name.strip(): st.error("Escribe el nombre del proveedor.")
+            else:
+                c=db(); c.execute("INSERT INTO providers(name,delivery,shipping,travel,note) VALUES(?,?,?,?,?)",(name.strip(),delivery,shipping,travel,note)); c.commit(); c.close(); st.rerun()
 
 elif page=="Configuración":
     st.header("Configuración"); s=settings(); st.subheader("Mano de obra por reparación")
@@ -114,7 +144,7 @@ elif page=="Configuración":
     st.subheader("Márgenes")
     with st.form("margins"):
         a,b,c=st.columns(3); mi=a.number_input("Mínimo %",min_value=0,value=int(s["margin_min"])); mr=b.number_input("Recomendado %",min_value=0,value=int(s["margin_rec"])); mp=c.number_input("Premium %",min_value=0,value=int(s["margin_prem"])); rnd=st.number_input("Redondear a",min_value=1,step=100,value=int(s["rounding"]))
-        if st.form_submit_button("Guardar márgenes"): save_setting("margin_min",mi);save_setting("margin_rec",mr);save_setting("margin_prem",mp);save_setting("rounding",rnd);st.rerun()
+        if st.form_submit_button("Guardar márgenes"): save_setting("margin_min",mi); save_setting("margin_rec",mr); save_setting("margin_prem",mp); save_setting("rounding",rnd); st.rerun()
     backup={"providers":[dict(x) for x in providers()],"references":[dict(x) for x in refs()],"settings":settings()}; st.download_button("Descargar respaldo JSON",json.dumps(backup,ensure_ascii=False,indent=2),"black-tech-cotizador.json","application/json")
 
 else:
