@@ -1,3 +1,4 @@
+import io
 import json
 import re
 import sqlite3
@@ -183,7 +184,7 @@ def parse_pdf(pdf_bytes):
     if PdfReader is None:
         raise RuntimeError("Falta pypdf en requirements.txt")
 
-    reader = PdfReader(pdf_bytes)
+    reader = PdfReader(io.BytesIO(pdf_bytes))
     current_brand = ""
     rows, ignored = [], []
 
@@ -442,6 +443,9 @@ elif page == "📄 Catálogo PDF":
     st.header("Importar catálogo de MarkBoss")
     st.caption("Importa pantallas y baterías. En pantallas, LCD/OLED/INCELL/GX/JK/CON MARCO son variantes; las baterías quedan como tipo Batería.")
     uploaded = st.file_uploader("PDF de precios", type=["pdf"], key="pdf_upload")
+    if uploaded and not uploaded.name.lower().endswith(".pdf"):
+        st.error("El archivo seleccionado no parece ser un PDF válido.")
+        uploaded = None
     if uploaded:
         if st.button("Analizar PDF", type="primary", use_container_width=True):
             try:
