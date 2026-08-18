@@ -1,4 +1,4 @@
-name: Fix PDF parser
+name: Fix PDF parser and reference catalog
 
 on:
   push:
@@ -15,15 +15,16 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Patch PdfReader bytes handling
+      - name: Fix parser and normalize reference qualities
         shell: python
         run: |
           from pathlib import Path
+          import re
 
           p = Path("app.py")
           text = p.read_text(encoding="utf-8")
-
           changed = False
+
           if "import io\n" not in text:
               text = text.replace("import json\n", "import io\nimport json\n", 1)
               changed = True
@@ -34,17 +35,54 @@ jobs:
               text = text.replace(old, new, 1)
               changed = True
 
-          # Make the uploader reject non-PDF data cleanly instead of exposing
-          # a Python traceback to the user.
           marker = 'uploaded = st.file_uploader("PDF de precios", type=["pdf"], key="pdf_upload")'
           replacement = marker + '\n    if uploaded and not uploaded.name.lower().endswith(".pdf"):\n        st.error("El archivo seleccionado no parece ser un PDF válido.")\n        uploaded = None'
           if marker in text and replacement not in text:
               text = text.replace(marker, replacement, 1)
               changed = True
 
+          new_clean = '''def clean_quality(text):
+              q = normalize(text).upper()
+              q = q.replace("INCELLL", "INCELL")
+              q = re.sub(r"\\bC\\s*/\\s*M\\b", "CON MARCO", q)
+              # En el catálogo MarkBoss, LCD INCELL y INCELL son la misma variante.
+              # LCD sin INCELL se conserva como variante independiente.
+              if re.search(r"\\bINCELL\\b", q):
+                  q = re.sub(r"\\bLCD\\s+INCELL\\b", "INCELL", q)
+                  q = re.sub(r"\\bINCELL\\s+LCD\\b", "INCELL", q)
+              q = normalize(q)
+              return q or "ESTÁNDAR"
+'''
+          pattern = r'def clean_quality\(text\):\n.*?\n\ndef screen_quality'
+          text2, count = re.subn(pattern, new_clean + '\n\ndef screen_quality', text, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit("No se encontró clean_quality")
+          if text2 != text:
+              text = text2
+              changed = True
+
+          migration_marker = '    dupes = c.execute("""\n'
+          migration = '''    # Canonicaliza registros antiguos antes de deduplicar.
+              rows = c.execute("SELECT id,quality FROM references_").fetchall()
+              for r in rows:
+                  canonical = clean_quality(r["quality"])
+                  c.execute("UPDATE references_ SET quality=? WHERE id=?", (canonical, r["id"]))
+
+'''
+          if migration_marker not in text:
+              raise SystemExit("No se encontró bloque de deduplicación")
+          if migration not in text:
+              text = text.replace(migration_marker, migration + migration_marker, 1)
+              changed = True
+
           if changed:
               p.write_text(text, encoding="utf-8")
           print("Patched:", changed)
+
+      - name: Remove temporary workflow
+        shell: bash
+        run: |
+          rm -f .github/workflows/normalize-reference-quality.yml
 
       - name: Commit patch
         shell: bash
@@ -55,6 +93,6 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app.py
-          git commit -m "Fix PDF upload bytes handling"
+          git add app.py .github/workflows/normalize-reference-quality.yml
+          git commit -m "Normalize duplicate screen reference variants"
           git push
