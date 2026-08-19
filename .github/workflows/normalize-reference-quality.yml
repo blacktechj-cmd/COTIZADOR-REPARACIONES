@@ -1,75 +1,10 @@
-name: Normalize reference qualities
+name: Legacy reference normalization (disabled)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-
-permissions:
-  contents: write
 
 jobs:
-  normalize:
+  disabled:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Normalize duplicate screen variants
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import re
-
-          path = Path('app.py')
-          text = path.read_text(encoding='utf-8')
-
-          new_clean = '''def clean_quality(text):
-              q = normalize(text).upper()
-              q = q.replace("INCELLL", "INCELL")
-              q = re.sub(r"\\bC\\s*/\\s*M\\b", "CON MARCO", q)
-              # LCD + INCELL describe the same INCELL variant in the MarkBoss catalog.
-              # Keep LCD alone as a valid separate quality.
-              if re.search(r"\\bINCELL\\b", q):
-                  q = re.sub(r"\\bLCD\\s+INCELL\\b", "INCELL", q)
-                  q = re.sub(r"\\bINCELL\\s+LCD\\b", "INCELL", q)
-              q = normalize(q)
-              return q or "ESTÁNDAR"
-'''
-          pattern = r'def clean_quality\(text\):\n.*?\n\ndef screen_quality'
-          text, count = re.subn(pattern, new_clean + '\n\ndef screen_quality', text, count=1, flags=re.S)
-          if count != 1:
-              raise SystemExit('No se encontró clean_quality para actualizar')
-
-          # Add a migration pass so old duplicated records are canonicalized before deduplication.
-          marker = '    dupes = c.execute("""\n'
-          migration = '''    # Canonicaliza referencias antiguas antes de eliminar duplicados.
-              rows = c.execute("SELECT id,quality FROM references_").fetchall()
-              for r in rows:
-                  canonical = clean_quality(r["quality"])
-                  c.execute("UPDATE references_ SET quality=? WHERE id=?", (canonical, r["id"]))
-
-'''
-          if marker not in text:
-              raise SystemExit('No se encontró bloque de deduplicación')
-          text = text.replace(marker, migration + marker, 1)
-
-          path.write_text(text, encoding='utf-8')
-          PY
-
-      - name: Commit normalized app
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app.py
-          git diff --cached --quiet && exit 0
-          git commit -m "Fix duplicate screen reference variants"
-          git push
-
-      - name: Remove temporary workflow
-        if: always()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm -f .github/workflows/normalize-reference-quality.yml || true
-          git commit -m "Remove temporary normalization workflow" || true
-          git push || true
+      - run: echo "Legacy workflow disabled. Reference normalization is maintained in app.py."
