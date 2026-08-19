@@ -1,0 +1,73 @@
+name: Reset initial database and protect saved data
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Patch database initialization
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          p = Path('app.py')
+          text = p.read_text(encoding='utf-8')
+
+          start = '    rows = c.execute("SELECT id,repair,quality FROM references_").fetchall()\n'
+          end = '    c.commit()\n    c.close()\n\n\ndef settings():'
+
+          if start not in text or end not in text:
+              raise SystemExit('No se encontró el bloque de inicialización de base de datos esperado')
+
+          a = text.index(start)
+          b = text.index(end, a)
+
+          replacement = '''    # Migración inicial controlada: deja la base limpia UNA sola vez.
+    # Después de esta migración, init_db nunca borra referencias, proveedores ni historial.
+    reset_done = c.execute("SELECT value FROM settings WHERE key='initial_database_reset_v2'").fetchone()
+    if not reset_done:
+        c.execute("DELETE FROM references_")
+        c.execute("DELETE FROM history")
+        c.execute("DELETE FROM providers")
+        c.execute(
+            "INSERT OR IGNORE INTO providers(name,delivery,shipping,travel,note) VALUES(?,?,?,?,?)",
+            ("MarkBoss Repuestos", "Recogida presencial", 0, 12000, "Catálogo PDF")
+        )
+        c.execute(
+            "INSERT INTO settings(key,value) VALUES('initial_database_reset_v2','1')"
+        )
+
+'''
+
+          text = text[:a] + replacement + text[b:]
+          p.write_text(text, encoding='utf-8')
+          print('Base de datos protegida: reset único aplicado en el próximo arranque.')
+
+      - name: Commit patched app
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.py
+          git diff --cached --quiet && exit 0
+          git commit -m "Protect database and perform one-time clean reset"
+          git push
+
+      - name: Remove temporary workflow
+        if: always()
+        shell: bash
+        run: |
+          git rm -f .github/workflows/reset-and-protect-database.yml || true
+          git commit -m "Remove temporary database reset workflow" || true
+          git push || true
