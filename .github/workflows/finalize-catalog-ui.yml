@@ -24,7 +24,6 @@ jobs:
           p = Path('app.py')
           text = p.read_text(encoding='utf-8')
 
-          # Pantallas: LCD+INCELL no es una variante distinta de INCELL.
           new_clean = '''def clean_quality(text):
     q = normalize(text).upper()
     q = q.replace("INCELLL", "INCELL")
@@ -40,7 +39,6 @@ jobs:
           if count != 1:
               raise SystemExit('No se encontró clean_quality')
 
-          # Si MarkBoss no escribe tecnología en DISPLAY, la mostramos como INCELL.
           new_screen = '''def screen_quality(text):
     up = str(text or "").upper()
     tokens = []
@@ -56,7 +54,13 @@ jobs:
           if count != 1:
               raise SystemExit('No se encontró screen_quality')
 
-          # Sustituye el CSS anterior por una capa visual más consistente y móvil.
+          # Referencias de pantalla antiguas: cualquier calidad vacía/ESTÁNDAR se normaliza a INCELL.
+          old_line = '        quality = clean_quality(r["quality"])'
+          new_line = '        quality = screen_quality(r["quality"]) if repair.upper() in {"PANTALLA", "DISPLAY", "PANTALLA LCD", "DISPLAY LCD", "PANTALLA OLED", "DISPLAY OLED"} else clean_quality(r["quality"])'
+          if old_line not in text:
+              raise SystemExit('No se encontró normalización de calidad en init_db')
+          text = text.replace(old_line, new_line, 1)
+
           css = '''st.markdown("""
 <style>
 :root{--bt-blue:#2563eb;--bt-bg:#f5f7fb;--bt-line:#e2e8f0;--bt-muted:#64748b}
