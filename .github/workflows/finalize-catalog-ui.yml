@@ -1,0 +1,113 @@
+name: Finalizar catálogo y aspecto V1
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Normalizar variantes y mejorar interfaz
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          p = Path('app.py')
+          text = p.read_text(encoding='utf-8')
+
+          # Pantallas: LCD+INCELL no es una variante distinta de INCELL.
+          new_clean = '''def clean_quality(text):
+              q = normalize(text).upper()
+              q = q.replace("INCELLL", "INCELL")
+              q = re.sub(r"\\bC\\s*/\\s*M\\b", "CON MARCO", q)
+              if re.search(r"\\bINCELL\\b", q):
+                  q = re.sub(r"\\bLCD\\s+INCELL\\b", "INCELL", q)
+                  q = re.sub(r"\\bINCELL\\s+LCD\\b", "INCELL", q)
+              q = normalize(q)
+              return q or "ESTÁNDAR"
+'''
+          pattern = r'def clean_quality\(text\):\n.*?\n\ndef screen_quality'
+          text, count = re.subn(pattern, new_clean + '\n\ndef screen_quality', text, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit('No se encontró clean_quality')
+
+          new_screen = '''def screen_quality(text):
+              up = str(text or "").upper()
+              tokens = []
+              for token in ["SOFT OLED", "INCELL", "OLED", "LCD", "ORIGINAL", "GX", "JK", "CON MARCO", "C/M"]:
+                  if re.search(rf"(?<!\\w){re.escape(token)}(?!\\w)", up):
+                      tokens.append("CON MARCO" if token == "C/M" else token)
+              # El catálogo MarkBoss usa DISPLAY sin tecnología explícita como INCELL.
+              # LCD+INCELL se presenta como INCELL para evitar duplicados.
+              if not tokens:
+                  return "INCELL"
+              return clean_quality(" ".join(tokens))
+'''
+          pattern = r'def screen_quality\(text\):\n.*?\n\ndef init_db'
+          text, count = re.subn(pattern, new_screen + '\n\ndef init_db', text, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit('No se encontró screen_quality')
+
+          # Canonicaliza registros existentes antes de la deduplicación.
+          marker = '    dupes = c.execute("""\n'
+          migration = '''    rows = c.execute("SELECT id,repair,quality FROM references_").fetchall()
+              for r in rows:
+                  if normalize(r["repair"]).lower() in {"pantalla", "display", "pantalla lcd", "display lcd", "pantalla oled", "display oled"}:
+                      canonical = screen_quality(r["quality"])
+                      c.execute("UPDATE references_ SET repair='Pantalla', quality=? WHERE id=?", (canonical, r["id"]))
+
+'''
+          if marker not in text:
+              raise SystemExit('No se encontró bloque de deduplicación')
+          if migration not in text:
+              text = text.replace(marker, migration + marker, 1)
+
+          # Sustituye el CSS anterior por una capa visual más consistente y móvil.
+          css = '''st.markdown("""
+          <style>
+          :root{--bt-blue:#2563eb;--bt-navy:#0f172a;--bt-bg:#f5f7fb;--bt-line:#e2e8f0;--bt-text:#172033;--bt-muted:#64748b}
+          .stApp{background:var(--bt-bg)}
+          .block-container{max-width:1120px;padding:1rem .9rem 4rem}
+          [data-testid="stHeader"]{background:transparent}
+          .hero{background:linear-gradient(135deg,#0b1220 0%,#172554 55%,#2563eb 100%);color:#fff;padding:24px 22px;border-radius:22px;margin:4px 0 14px;box-shadow:0 12px 30px rgba(15,23,42,.16)}
+          .hero h1{margin:0;font-size:2rem;letter-spacing:.1em;font-weight:850}.hero p{margin:6px 0 0;color:#dbeafe;font-size:.98rem}
+          .navbox{background:#fff;border:1px solid var(--bt-line);padding:8px 10px;border-radius:15px;margin-bottom:18px;box-shadow:0 3px 12px rgba(15,23,42,.04)}
+          .reference-box{background:#fff;border:1px solid var(--bt-line);border-radius:18px;padding:14px;margin:10px 0 16px;box-shadow:0 5px 16px rgba(15,23,42,.05)}
+          .big-result{background:linear-gradient(135deg,#eff6ff,#fff);border:2px solid var(--bt-blue);border-radius:20px;padding:20px;text-align:center;margin:16px 0;box-shadow:0 8px 22px rgba(37,99,235,.09)}
+          .big-result .value{font-size:2.45rem;font-weight:850;color:#1d4ed8}.big-result .label{color:var(--bt-muted);font-size:.86rem;letter-spacing:.05em;font-weight:700}
+          .history-card{border:1px solid var(--bt-line);border-radius:18px;padding:15px;margin:9px 0;background:#fff;box-shadow:0 4px 14px rgba(15,23,42,.04)}
+          .history-title{font-size:1.08rem;font-weight:800;margin-bottom:4px}.history-meta{color:var(--bt-muted);font-size:.88rem}
+          div[data-testid="stMetric"]{background:#fff;border:1px solid var(--bt-line);border-radius:15px;padding:10px 12px;box-shadow:0 3px 10px rgba(15,23,42,.035)}
+          div[data-testid="stButton"]>button{border-radius:12px;font-weight:700;min-height:2.7rem}
+          div[data-testid="stSelectbox"]>div,div[data-testid="stTextInput"]>div,div[data-testid="stNumberInput"]>div{border-radius:12px}
+          @media(max-width:640px){.block-container{padding:.65rem .65rem 3.5rem}.hero{padding:19px 17px;border-radius:18px}.hero h1{font-size:1.55rem}.big-result .value{font-size:2rem}}
+          </style>
+          """, unsafe_allow_html=True)
+          '''
+          css_pattern = r'st\.markdown\("""\n<style>.*?</style>\n""", unsafe_allow_html=True\)'
+          text, css_count = re.subn(css_pattern, css, text, count=1, flags=re.S)
+          if css_count != 1:
+              raise SystemExit('No se encontró bloque CSS para reemplazar')
+
+          p.write_text(text, encoding='utf-8')
+
+      - name: Validar Python
+        run: python -m py_compile app.py
+
+      - name: Guardar cambios y retirar workflow temporal
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.py .github/workflows/finalize-catalog-ui.yml
+          git commit -m "Finalizar variantes de pantalla y mejorar interfaz" || exit 0
+          git push
